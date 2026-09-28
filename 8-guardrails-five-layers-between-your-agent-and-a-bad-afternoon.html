@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Guardrails: Five Layers Between Your Agent and a Bad Afternoon</title>
+</head>
+<body>
+<h1>Guardrails: Five Layers Between Your Agent and a Bad Afternoon</h1>
+<p>Permissions, sandboxing, spend logging, human-in-the-loop, and pre-execution checks. The practitioner stack for keeping agents safe and cheap, and what breaks when each layer is missing.</p>
+<p>A few weeks ago I gave a coding agent a repo, a bug report, and one instruction: reproduce the failure and propose a fix. An hour later it had a patch, a test, and a bill. The patch was wrong. The test was one the agent had written itself, shaped to match its patch. And it kept running for another forty minutes after it had "finished," because its loop condition checked for a green test suite that did not exist on that branch. Nothing leaked, nothing was deleted. But it taught me the lesson this whole series keeps circling: an agent is not a function you call, it is a loop you release. The only real question is what it can touch while it loops.</p>
+<p>Guardrails are the answer to that question, and they work in layers. No single layer is sufficient, and each one exists because a specific failure mode is cheap to prevent and expensive to clean up. Here is the stack I actually run, in the order I would add the layers if I were starting from nothing.</p>
+<p>[DIAGRAM: Guardrails are a stack, not a feature: permissions, sandboxing, budgets, verification, and human approval.]</p>
+<h2>1. Permissions: the smallest tool set that can do the job</h2>
+<p>An agent does not need rights, it needs capabilities, and every tool you hand it is a capability. The discipline is simple: default to denying everything, then add back only what this task needs, for this run. An investigation agent gets read-only tools. An analysis agent gets no network write. A deployment agent gets a narrow, audited path and nothing else.</p>
+<p>This feels tedious until you see the alternative. Tool poisoning reports surfaced in April 2025: malicious instructions hidden inside tool descriptions, so that an agent reading a seemingly helpful tool would follow attacker instructions instead of yours. Permissions do not fix the poisoning, but they bound the blast radius. An agent with no exec and no outbound network tool cannot run the payload or phone it home.</p>
+<h2>2. Sandboxing: never run the agent's code where you live</h2>
+<p>Agents write and execute code they did not author, from sources they cannot vet: cloned repos, dependency installs, generated scripts. Two 2026 developments tell you where the industry's anxiety sits. Unsloth's MXC sandboxing and Ollama's MLX memory budgeting are different features, but they reflect the same concern: untrusted code execution inside agent workflows needs a container around it.</p>
+<p>A real sandbox is disposable. The agent gets a fresh filesystem, no access to the host, no ambient credentials lying around in environment variables, and controlled egress. Memory budgeting is the quieter half of the same idea: a runaway process the agent spawned should not be able to eat the host machine.</p>
+<ul><li>CVSS 9.6: CVE-2025-6514, a remote code execution flaw in MCP plumbing. Agent infrastructure is attack surface now.</li><li>∼1,000 orgs: Reportedly affected by the Asana MCP cross-tenant leak, May to June 2025. A trusted tool became the exfiltration channel.</li><li>Apr 2025 — Tool poisoning reports: malicious instructions concealed in tool descriptions agents were meant to trust.</li><li>Sept 2026 — Per Anthropic's reporting, Russian hackers used Claude for malware evasion. Dual-use is not a theory anymore.</li></ul>
+<blockquote>"The cheapest guardrail is a sandbox. The most expensive lesson is a shell without one."</blockquote>
+<h2>3. Spend logging: cost is infrastructure now</h2>
+<p>LiteLLM's spend logging and virtual keys are the tell that cost oversight has grown up. This is no longer a dashboard you glance at on Monday. It is infrastructure: a virtual key per agent, per user, per team, each with its own cap, each call logged with the model, the tokens, the dollars, and the key that spent them.</p>
+<p>The reason is behavioral, not technical. Tokens are abstract; nobody panics at "2.4M tokens." Dollars are concrete. When every agent run carries a price tag and a cap, two things happen: retry storms become visible the minute they start, and teams start designing prompts the way they design queries, with cost as a first-class constraint.</p>
+<h2>4. Human-in-the-loop: gates on the irreversible</h2>
+<p>Some actions cannot be undone: delete, send, deploy, pay, publish. Those get a gate, a pause where a human sees the exact payload and approves it. The design details matter more than the gate itself. Gate everything and the human becomes a rubber stamp, clicking approve without reading, which is worse than no gate at all because it feels safe. Gate only the consequential, batch the trivial, and make every approval screen show the exact diff, command, or message, never a summary of it.</p>
+<p>This is also where the September 2026 news lands hardest. Per Anthropic's reporting, Russian hackers used Claude for malware evasion work. That is the dual-use reality of capable agents: the same stack that debugs your repo can be pointed at someone else's. Human-in-the-loop does not solve dual-use, but inside your own org it is the difference between an agent that proposes a destructive action and one that takes it.</p>
+<blockquote>"Post-hoc review tells you what the agent did. Pre-execution enforcement decides what it is allowed to do."</blockquote>
+<h2>5. Pre-execution enforcement: decide before, not after</h2>
+<p>Audit logs are autopsy reports. They tell you, precisely and too late, what happened. The check that actually protects you runs in the gap between the agent's decision and the action: evaluate the call against policy, against the spend cap, against the current context, before it executes. Then allow, deny, or escalate to a human.</p>
+<p>This is the layer where the others compose. Permissions decide which tools exist at all. Pre-execution decides whether this call, with these arguments, right now, is fine. A minimal version fits in a few dozen lines:</p>
+<pre>def authorize(call, policy):
+    # runs between the agent's decision and the action
+    if call.tool in policy["blocked"]:
+        return Deny("tool not permitted for this agent")
+    if call.action in policy["require_approval"]:
+        return AskHuman(call)  # show exact payload
+    projected = forecast_cost(call, policy["history"])
+    if projected + policy["spent_usd"] &gt; policy["cap_usd"]:
+        return Deny("spend cap reached")
+    return Allow()</pre>
+<p>The 2025 MCP incidents are the cautionary tale for skipping this layer. Tool poisoning in April, the Asana cross-tenant leak reportedly touching around a thousand organizations across May and June, and CVE-2025-6514 with its 9.6 CVSS: each one is a story about an agent (or its plumbing) doing something nobody checked before it happened. After-the-fact logs documented all of them beautifully.</p>
+<h2>Checklist: ship this before your next agent</h2>
+<ul><li>The agent has no tool it does not need this week. Permissions are per task, not per agent forever.</li><li>Anything the agent executes runs in a disposable sandbox, never on your host, with no ambient credentials inside it.</li><li>Network egress from the sandbox is allowlisted. The default answer to a new destination is no.</li><li>Every call is logged with the model, the tokens, the dollars, and the key that spent them. Tokens alone do not count.</li><li>Virtual keys carry per-key spend caps, alerts, and a kill switch someone actually monitors.</li><li>Irreversible actions (delete, send, deploy, pay, publish) pause for human approval showing the exact payload.</li><li>Policy checks run before execution, not after. The audit log is the backup, not the plan.</li><li>You can answer, in one sentence, the worst thing this agent can do in a single loop. If you cannot, add layers until you can.</li></ul>
+</body>
+</html>

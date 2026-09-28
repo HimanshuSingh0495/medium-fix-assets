@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Agents Don’t Forget. They Misremember.</title>
+</head>
+<body>
+<h1>Agents Don’t Forget. They Misremember.</h1>
+<p>A production field guide to the four kinds of agent memory, how each one breaks, and the retrieval discipline that keeps recall honest.</p>
+<ul><li>96K+ tokens of context reportedly reachable on a 24GB GPU via llama.cpp streaming expert loading (2026). Bigger working memory, same forgetting problem.</li><li>4 memory tiers in Nous Research’s Hermes agent, reportedly: working, episodic, semantic, procedural. The first shipping agent to name all four as explicit pipeline stages.</li></ul>
+<p>I found the exchange in a routine transcript review, the kind you do on a Friday when every dashboard looks green. A customer asked our support agent about migrating between two API versions. The agent answered instantly and in detail. Step by step, flag by flag. Every step was correct for the API we had shipped two years earlier. The endpoint it named had been deprecated for months. The runbook it quoted lived in an archive nobody had purged.</p>
+<p>Nothing in the pipeline had failed. Retrieval returned passages, the model read them, and the answer was fluent. The agent had not forgotten anything. It had misremembered, with total confidence, and the customer could not tell the difference. That exchange changed how I think about agent memory. Agents have four kinds of memory, each one breaks in its own way, and almost nobody gates any of them.</p>
+<p>[DIAGRAM: Figure 1: Agents do not have one memory; they have four tiers, and most failures come from the wrong tier answering.]</p>
+<h2>Working memory is a desk, not a library</h2>
+<p>Every agent has a working memory: the context window, everything the model can attend to right now. The current goal, the conversation so far, the tool results that just came back. It is fast, it is total, and it evaporates when the session ends. Capacity keeps getting cheaper. Streaming expert loading in llama.cpp reportedly pushes 96K+ tokens of context onto a 24GB GPU this year, which means a serious working set no longer needs a datacenter.</p>
+<p>A bigger desk is not a better memory. It is a bigger pile. Everything on it is trusted equally, so stale passages sit with the same authority as facts, and stuffing the window makes answers worse, not better. Attention is finite even when tokens are cheap. Working memory fails in exactly one way: it ends. The session closes, the desk is cleared, and everything durable has to live somewhere else.</p>
+<p>“A context window is a desk, not a library. Clearing the desk is not forgetting. But confusing the two is how an agent reconstructs the past with total confidence.”</p>
+<h2>Episodic memory: what the agent did</h2>
+<p>When an agent finishes a run, the transcript records what it did: the goal, the tools it called, what worked, what failed. Kept across runs, that becomes episodic memory, the agent’s autobiography: stored trajectories, summarized sessions, the lessons-learned notes some agents write between runs. This is where an agent learns that one customer’s environment always needs the legacy flag.</p>
+<p>It is also the tier that degrades fastest. Every summarization pass is lossy compression. The third summary remembers the conclusion and drops the conditions that made it true, so the agent carries forward “always use the legacy flag” long after the reason expired. Episodes are indexed by similarity, so one vivid failure can outrank a hundred quiet successes, and the agent routes around a flaky endpoint forever. Nothing announces this. You just get a slow behavior drift nobody can explain. The hygiene is the same as a human diary: dated entries, conditions recorded alongside conclusions, and a way to retire episodes that no longer describe the world.</p>
+<h2>Semantic memory: what the agent believes is true</h2>
+<p>Semantic memory is the agent’s model of the world: facts, documentation, schemas, policies, product knowledge. This is the tier most teams actually build, because this is what RAG is for. Retrieval augmented generation is, at bottom, a long term memory prosthesis. Facts live in an index instead of in the model’s weights, get fetched at answer time, and arrive in working memory alongside the question. It is the right architecture. Weights are a terrible place to store facts that change on a Tuesday.</p>
+<p>But moving facts out of the model does not make them true. It makes them retrievable, which is a different claim. Semantic memory breaks three ways. First, stale facts. My API migration story is the canonical case: the retriever worked perfectly and returned exactly what was indexed. The index was wrong. Staleness is a pipeline bug wearing a model costume. Second, retrieval misses. The right fact is in the index and the wrong passage wins the ranking, and nobody questions the fluent answer until a customer does. Third, hallucinated recall. The retriever returns three fragments, none quite complete, and the model stitches them into a fourth fact that never existed. Every fragment is real, which is what makes this the hardest failure to catch.</p>
+<p>The three failures share one root cause. The model treats retrieved text as remembered truth, with no distinction between “the index contains this” and “this is correct.” That distinction has to be built into the system around the model, because the model will never draw it on its own.</p>
+<p>“Retrieval is not recall. The agent does not remember what happened. It retrieves what is most similar to the question, and similarity is not truth.”</p>
+<h2>Procedural memory: what the agent knows how to do</h2>
+<p>The fourth tier is the one teams forget to name. Procedural memory is how the agent does things: skills, playbooks, runbook procedures, the typed tool contracts it reaches for. In the Hermes agent from Nous Research, working, episodic, semantic, and procedural memory reportedly ship as four explicit tiers of one pipeline. The naming matters, because once you name the tier you can see it rot.</p>
+<p>A playbook that says “restart the worker with the old flag” is a fact about how the world used to work. When the flag changes and the playbook does not, the agent executes a confident, fluent, fully wrong procedure, and the failure looks like a tool bug. You debug the tool for a week before checking the procedure. Agents also generalize silently from episodes: last time this worked when I called the tools in this order. That is a learned procedure with no version number, no owner, and no review. Skills need the same lifecycle as code: owners, versions, deprecation dates.</p>
+<h2>Fix the retrieval, not the model</h2>
+<p>None of these tiers is fixed by a smarter model. A smarter model with ungated memory is just a more eloquent confabulator. The fixes are operational, and they rhyme with the fixes from any production RAG system, because agent memory is RAG with a longer time horizon and higher stakes.</p>
+<p>First, put a similarity gate between every memory store and generation. Retrieved episodes and facts that score below threshold never reach the model. A memory system that cannot say “I have nothing reliable on this” is not a memory system. It is a rumor mill.</p>
+<p>Second, build a labeled eval set for memory, not just retrieval. Keep queries with known correct facts and episodes, drawn from real incidents, and run them before every change to chunking, ranking, summarization, or ingestion. Memory regressions look like behavior changes, which makes them the hardest to attribute without a harness.</p>
+<p>Third, version every fact and retire aggressively. Incremental ingestion keyed on source version metadata beats full reindexing on cost and freshness: only changed content gets re embedded. Stale facts are an ingestion decision, not bad luck. Date your episodes too.</p>
+<p>Fourth, teach explicit abstention as a first class output. “I have no reliable record of that” must be as easy to produce as a fluent guess, and the product has to reward it. Engineers forgive a missing answer. They do not forgive a confident wrong one.</p>
+<p>A minimal version of the recall path looks like this:</p>
+<pre>PYTHONrecall.pydef recall(query, memory, threshold=0.78):
+    hits = memory.search(query, top_k=8)
+    strong = [h for h in hits if h.score &gt;= threshold]
+    if not strong:
+        return abstain("no reliable memory found")
+    fresh = [h for h in strong if not h.is_stale()]
+    if not fresh:
+        return abstain("only stale records found")
+    return answer_with_citations(query, fresh)</pre>
+<p>Figure 2: The recall gate. A similarity threshold rejects weak matches and a freshness check rejects stale ones. Anything that fails either checkpoint abstains instead of confabulating.</p>
+<h2>The memory checklist</h2>
+<ul><li>Name your four tiers. Write down what lives in working, episodic, semantic, and procedural memory, and who owns each one.</li><li>Gate every recall. Similarity thresholds between every memory store and generation. Weak matches never reach the model.</li><li>Version your facts. Ingest incrementally on source version metadata. Timestamp your episodes. Serve nothing you cannot date.</li><li>Eval the memory. A labeled set of queries with known correct facts and episodes, run before every index or summarization change.</li><li>Make abstention easy. “I have no reliable record of that” must be a first class output, rewarded by the product.</li><li>Review procedures like code. Skills and playbooks get the same review cadence as docs, because they rot at the same speed.</li><li>Measure recall quality. Track retrieval misses, abstention rate, and corrections per hundred answers.</li></ul>
+<p>The four tiers only work as a system when the gates between them hold. An agent that remembers everything and trusts nothing beats one that remembers nothing and trusts everything. The desk gets cleared every night. What survives until morning is a retrieval decision.</p>
+</body>
+</html>

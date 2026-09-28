@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Anatomy of the Agent Loop: Plan, Act, Observe, Repeat</title>
+</head>
+<body>
+<h1>Anatomy of the Agent Loop: Plan, Act, Observe, Repeat</h1>
+<p>An agent is not a smarter model. It is a disciplined loop around a model, and most of the engineering is in the loop.</p>
+<p>The first agent I ever watched in production embarrassed itself. It was supposed to triage a support ticket: read the ticket, check the runbook, set the status, send the reply. Instead it read the ticket, checked the runbook, read the ticket again, drafted a reply, deleted the draft, and read the ticket a third time before asking me whether it should read the ticket. The model was fine. The loop had no memory of what it had already tried and no rule that told it to stop. I fixed it with a counter, a transcript, and a termination condition: about ten lines of the most boring code I have ever written. That was the day agents stopped being magic for me. An agent is a while loop. The model is just the part inside it that makes the decisions.</p>
+<p>[DIAGRAM: Figure 1: The agent loop. A transcript holds the state, the model decides, deterministic code executes and records, and a bounds box enforces termination. A critic pass is optional before anything consequential.]</p>
+<h2>1. The model is stateless, so the loop holds the memory</h2>
+<p>Start with what a model call actually is. You send tokens in, you get tokens out, and then it forgets everything. The next call has no memory of the previous one. A language model is amnesiac by design. That sounds like a limitation, and it is, but it is also the whole reason the agent loop exists.</p>
+<p>An agent loop gives the model a memory it does not have. The scaffolding keeps a transcript, sometimes called the trace: the task, every thought the model produced, every action it took, every result that came back. Each iteration, the code hands the full transcript to the model and asks one question: given everything that has happened, what next? The model answers, the code executes, the result gets appended to the transcript, and the loop goes around again.</p>
+<p>So each pass has the same four phases. Observe: read the current state, which is the task plus the trace. Think: the model reasons about what to do. Act: deterministic code runs the chosen tool. Record: the observation goes back into the trace. Then repeat.</p>
+<p>Notice where the state lives. Not in the model. In the transcript, which your code owns, can inspect, can truncate, can persist, and can replay. This is the first principle of agent engineering: state is data, and data lives in code. The model is a function you call with that data.</p>
+<h2>2. ReAct: reason, then act, then look</h2>
+<p>The cleanest articulation of this loop is the ReAct pattern: the model alternates between reasoning traces and actions. Each iteration produces a Thought, then an Action, and the environment returns an Observation. Thought, action, observation, thought, action, observation, until the task is done.</p>
+<p>Why alternate? Because reasoning without acting drifts into speculation, and acting without reasoning thrashes. The reasoning trace is where the model commits to a plan in writing, which means the next iteration can read its own earlier reasoning right next to the observation that followed it. When a tool returns something unexpected, the model sees the mismatch between what it intended and what happened, and that mismatch is what lets it correct course.</p>
+<p>This is also what makes the trace debuggable. When an agent fails, you do not wonder what it was thinking. You read its thoughts, in order, next to the actions it took and the results it saw. The trace is the flight recorder.</p>
+<blockquote>An agent is not a smarter model. It is a while loop with a model inside it.</blockquote>
+<p>One more detail worth keeping from the pattern: the thought is text, and text is cheap to log and search. Agents that skip the reasoning step to save tokens almost always cost more in the end, because you lose the record of why each action was taken, and debugging blind is the most expensive activity in this field.</p>
+<h2>3. Reflection: the model checks its own work</h2>
+<p>At some point the loop needs to ask: is this actually done? That is reflection, and it is just the loop wearing a different hat.</p>
+<p>The simple version: every few iterations, or before the final answer, you run one more model call with a different job. Not "what next" but "look at this trace and judge it." Did the actions actually accomplish the task? Is a step missing? Did the last observation contradict an earlier assumption? The critic's verdict goes into the trace like any other observation, and then ordinary code decides what to do about it: continue, retry with a correction, or escalate to a human.</p>
+<p>You can run the critic as the same model with a different prompt, or as a cheaper, faster model whose only job is verification. The architecture does not matter much. What matters is the separation: the actor proposes, the critic judges, and code arbitrates. Never let the actor grade its own homework without an independent check when the stakes are real.</p>
+<p>Reflection is also where agents recover from their own confusion. A model that has repeated itself twice will often, when asked to review its trace, notice the repetition and break out of it. The loop does not need to be smart. It needs a mirror.</p>
+<h2>4. Bounded execution: every loop must be allowed to end</h2>
+<p>Here is the part people skip in demos and pay for in production. A loop with no exit condition is not an agent, it is an incident waiting for a time slot. Models get confused. Tools hang. Transcripts grow. Bills compound. So every production loop carries a set of bounds, and every bound is enforced in code, never in a prompt.</p>
+<p>The minimum set has four members. Max steps: a hard cap on iterations, so a confused agent stops after N passes no matter what it believes. Wall clock timeout: a deadline on the whole run, because steps are not the only thing that can hang. Context and token budget: a limit on how much transcript you will feed the model, per run and per step, because traces grow monotonically and context is not free. Cost cap: a dollar ceiling per run, because tool calls and model calls both cost money and the model does not know what money is.</p>
+<p>Just as important is the termination policy: what happens when a bound is hit. The answer is never "ask the model what to do," because the model is the thing that got you here. The policy is code: return a partial result with the trace so far, mark the run incomplete, escalate, or retry once with a tighter scope. And define "done" twice: the model declares it is finished, and a deterministic checker confirms the declared result actually satisfies the task. One of those without the other is how you ship confident nonsense.</p>
+<blockquote>Every unbounded loop is a pager waiting to go off.</blockquote>
+<p>A useful rule of thumb: if you cannot point to the line of code that guarantees this loop terminates, it does not terminate.</p>
+<h2>5. Mostly deterministic code, model at exactly the right points</h2>
+<p>This is the principle the 12-Factor Agents work puts at the center, and it is the most practical idea in this article: the orchestrator is ordinary software. The model appears at exactly the points that require judgment, and nowhere else.</p>
+<p>Count the model calls in the loop sketched below. There are two: the decide step, which needs judgment about what to do next, and the optional critic step, which needs judgment about whether the work is good. Everything else is code you can unit test. Parsing the model's chosen action into a tool call: code. Enforcing timeouts and retries: code. Appending to the trace: code. Checking budgets: code. Logging: code. Assembling the final answer: usually code with the trace as input.</p>
+<pre>def run_agent(task, tools, bounds):
+    trace = [system_prompt(), task]   # state lives in code, not the model
+    steps = 0
+    while not done(trace) and steps &lt; bounds.max_steps:
+        check_budgets(trace, bounds)        # time, tokens, cost: enforced here
+        thought, action = llm_decide(trace)  # model call 1: judgment
+        if action is None:                # model says it is finished
+            break
+        result = execute(action, tools)     # deterministic code runs the tool
+        trace.append((thought, action, result))
+        steps += 1
+        if steps % 3 == 0:
+            verdict = llm_critique(trace)  # model call 2: the mirror
+            trace.append(("critic", verdict))
+    return finalize(trace)               # code assembles the answer</pre>
+<p>This split is what makes agents engineerable. When a run fails, you replay the trace through the code without calling the model and watch where it breaks. When a run is slow, you profile the tool calls, not the prompts. When costs spike, the budget counters tell you which step ate the money. None of that is possible if the model's judgment is smeared across the control flow.</p>
+<p>The failure mode to watch for is prompt-as-code: using the model to do things code does better. Asking the model to enforce a timeout, to count its own steps, to remember a budget, or to do arithmetic on token counts. Every one of those is a place where you put the model at the wrong point. Move it to code, keep the model for judgment, and the system gets simpler and cheaper at the same time.</p>
+<h2>6. The whiteboard test</h2>
+<p>If this article worked, you can now draw an agent on a whiteboard from memory. Try it. Five boxes: a transcript that holds the state, a model that decides, tools that execute, a recorder that feeds observations back into the transcript, and a bounds box wrapped around the whole loop with four numbers in it: steps, time, tokens, cost. Two arrows that matter: the transcript feeding the model, and the observation feeding the transcript. One optional box off to the side: the critic, checking the work before anything consequential happens.</p>
+<p>Everything else in this series is a refinement of that drawing. Memory is a fancier transcript. Planning is a decide step that writes bigger thoughts. Multi agent systems are several loops sharing one whiteboard. Tool use is the execute box with better contracts. But the loop is the atom. Learn to see it and you will stop asking whether a system "is an agent" and start asking the useful questions instead: where is the state, where are the bounds, and who checks the work.</p>
+<h2>The loop checklist</h2>
+<p>Before you call anything an agent, check the loop:</p>
+<ul><li>One model decision per iteration. Everything else is code.</li><li>A trace that records thought, action, and observation on every pass.</li><li>An explicit done condition, verified by code, not just declared by the model.</li><li>Four hard budgets: max steps, wall clock timeout, token budget, cost cap.</li><li>A critic pass before any consequential action.</li><li>Replayable logs: any failure reproducible from its trace alone.</li><li>The model never sets, extends, or negotiates its own limits.</li></ul>
+<p>The next time someone demos an agent and it feels like magic, ask to see the loop. Count the bounds. Read the trace. Magic is usually just a loop whose code you have not read yet.</p>
+</body>
+</html>

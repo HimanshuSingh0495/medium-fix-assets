@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>The Handshake Problem: How AI Agents Find Each Other and Get Work Done</title>
+</head>
+<body>
+<h1>The Handshake Problem: How AI Agents Find Each Other and Get Work Done</h1>
+<p>One agent with tools is a clever program. A dozen agents that need to cooperate is an ecosystem, and ecosystems need protocols.</p>
+<ul><li>50+ to 150+ organizations behind Google’s A2A protocol, from its April 2025 launch to today</li><li>22,000+ stars on the A2A protocol’s public GitHub repo</li><li>v1.0: added Signed Agent Cards, cryptographic identity for agents meeting agents</li><li>Jul 2026 — Google, Microsoft, Salesforce, Snowflake, and ServiceNow reportedly agreed to support a shared standard for connecting agents to enterprise software, per The Information</li></ul>
+<p>Earlier this year I built a support workflow that looked simple on the whiteboard. A triage agent read incoming tickets, a billing agent checked refund eligibility, and a logistics agent tracked the replacement shipment. Three agents, each good at one job, all working for the same company.</p>
+<p>It took longer to connect the agents than to build any one of them. The triage agent sent a ticket ID the billing agent did not recognize. The billing agent returned a refund decision in a format the triage agent could not parse. When the logistics agent went down for maintenance, nobody got told, so the triage agent kept handing work to a dead endpoint. The agents were smart. The plumbing between them was not.</p>
+<p>That week taught me the lesson this series keeps circling back to. An agent that works alone is a tool. Agents that work together are a system, and systems need a shared language. This article is about the protocol that is trying to become that language: agent to agent communication, from first principles to what is actually shipping in production right now.</p>
+<h2>How two agents get work done together</h2>
+<p>[DIAGRAM: Agent-to-agent protocols turn a handshake, discovery, negotiation, delegation, into a standard flow any two agents can run.]</p>
+<h2>One agent is a script. Two agents are a negotiation.</h2>
+<p>Let us start from first principles, since that is the point of this series. An AI agent, as we defined it in part one, is a model wrapped in a loop: it perceives, it reasons, it acts through tools, it observes the result, it repeats. A single agent works because its tools are known quantities. The developer wired them up. The function signatures are fixed, the endpoints are fixed, the schemas are fixed. When the agent calls get_order_status(order_id), it knows exactly what comes back.</p>
+<p>Now put two agents in a room. Agent A was built by your team in March. Agent B was built by a vendor you hired in August, running on different infrastructure, with different conventions, and it was never told you exist. For A to use B, someone has to answer four questions. How does A find B. How does A know what B can do. How does A hand B a task and track it. How does A know the answer it got back is trustworthy.</p>
+<p>Answer those questions with custom integrations and you get the classic N squared problem. Every new agent needs a bespoke connector to every agent it might talk to, and every connector rots independently when either side changes. I have built this graph by hand. It works for three agents and becomes unmaintainable around agent number six.</p>
+<p>The alternative is a protocol: one standard way for any agent to introduce itself, describe its capabilities, and exchange tasks, so that no pair of agents ever needs a custom handshake again. That is the entire idea behind Google’s Agent to Agent protocol, usually shortened to A2A. It launched in April 2025 with more than 50 founding partners, and the premise was simple. Agents should be able to discover and delegate to each other the way web services learned to do twenty years ago, over open standards instead of private integrations.</p>
+<h2>The Agent Card is the whole trick</h2>
+<p>The protocol’s core invention is almost embarrassingly simple. It is a document called an Agent Card: a JSON file an agent publishes at a well known URL that says who it is, what it can do, and how to talk to it. Skills are listed with names, descriptions, and tags. The endpoint is listed. The authentication scheme is listed. Any agent that fetches the card knows enough to start a conversation, with no prior arrangement and no human in the loop.</p>
+<p>Think of it as a business card that is also machine readable. Before business cards, doing business with a stranger meant a long round of introductions. After them, a stranger could tell you in ten seconds whether they were worth talking to. The Agent Card does the same thing for software. Discovery stops being a procurement process and becomes a lookup.</p>
+<p>Version 1.0 of the protocol added the part that makes this usable outside a demo: Signed Agent Cards. The card is cryptographically signed, so a receiving agent can verify that the card it just fetched was actually issued by the agent it claims to be, and has not been tampered with in transit. This matters enormously. An agent that accepts tasks from strangers is an attack surface, and a forged capability listing is a classic way in. Cryptographic identity between agents turns “I found an agent that says it does refunds” into “I found an agent that provably is the refunds agent.” It is a passport stamp, not a name tag.</p>
+<pre>{
+  "protocolVersion": "1.0",
+  "name": "refund-agent",
+  "description": "Evaluates refund eligibility and issues refunds up to $500",
+  "url": "https://agents.example.com/refund",
+  "capabilities": { "streaming": true },
+  "skills": [
+    {
+      "id": "refund-eligibility",
+      "name": "Check refund eligibility",
+      "description": "Given an order ID, returns eligibility and the maximum amount",
+      "tags": ["refunds", "billing"]
+    }
+  ],
+  "authentication": { "schemes": ["OAuth2"] }
+}</pre>
+<p>A simplified Agent Card, the document at the heart of A2A discovery.</p>
+<h2>“What can you do for me?” is the real API</h2>
+<p>Discovery is step one. Step two is the actual work, and this is where agent to agent communication stops looking like an API call and starts looking like management. When agent A delegates to agent B, it creates a task: a tracked unit of work with a lifecycle. Submitted, working, waiting on input, completed, failed. The task has an ID. It carries state. It can stream partial results. It can come back asking for clarification, the way a contractor calls you back with a question halfway through the job.</p>
+<p>This is the conceptual leap the series has been building toward. Calling a function means you control the contract completely. Delegating to an agent means you are handing intent to a system that interprets it, and you need the machinery to watch the work happen: timeouts, status checks, cancellation, and a record of what was asked and what came back. A2A defines these as protocol primitives precisely so they do not have to be reinvented per integration.</p>
+<p>Then there is the money question, literally. Delegation in the real world involves paying for work, and the AP2 extension to the protocol adds payment and commerce support for exactly that reason. An agent that books travel, orders inventory, or hires compute on your behalf is spending your money through another agent, and “who authorized what spend” needs to be a first class part of the conversation, not something bolted on afterward. The protocol growing a payments story is a sign it is being designed for production use, not conference demos.</p>
+<h2>This is no longer a slide deck</h2>
+<p>Protocols die in committee all the time, so the honest question is whether anyone is actually running this. The numbers say the momentum is real. From more than 50 founding partners at the April 2025 launch, the effort now counts more than 150 organizations. The public repo has passed 22,000 stars, which for a protocol specification is a lot of people reading the fine print.</p>
+<p>More importantly, it is showing up where production workloads live. The protocol has production deployments in Azure AI Foundry and Amazon Bedrock AgentCore, meaning agents built on two of the largest cloud AI platforms can speak it today. That is the difference between a standard and a suggestion.</p>
+<p>And the news that reframes all of this landed in July 2026. Google, Microsoft, Salesforce, Snowflake, and ServiceNow reportedly agreed to support a shared standard for connecting agents to enterprise software, according to The Information. Read that list again. Those are five companies that compete fiercely and almost never agree on infrastructure. That they reportedly aligned on how agents connect to enterprise systems tells you where the industry thinks the bottleneck is. It is not model quality anymore. It is interoperability. The agent that can only talk to its own vendor’s tools is about as useful as an email client that only sends mail to one provider.</p>
+<h2>The part nobody puts in the demo</h2>
+<p>A protocol does not solve agent to agent communication. It gives you the vocabulary to have the hard conversations. Here is what the demos skip.</p>
+<p>First, delegation chains fail in ways function calls do not. If agent B hallucinates a refund amount and agent A passes it to the customer, who is wrong? The error compounds across the handoff, and debugging a conversation between two black boxes is a genuinely new kind of incident review. You need the handoff logged as carefully as you would log an API call, because “the other agent said so” is not a root cause.</p>
+<p>Second, identity is necessary but not sufficient. Signed Agent Cards prove a card is authentic. They do not prove the agent behind it is competent, honest, or still running the code you tested against. Trust between agents is going to need reputation, auditing, and revocation, and most of that machinery is early.</p>
+<p>Third, recursive delegation is a billing event. Agents calling agents calling agents is elegant on an architecture diagram and terrifying on an invoice. Every delegation layer needs a depth cap, a timeout, and a retry budget, or one confused agent can spend your budget talking to itself through intermediaries.</p>
+<p>None of this is an argument against the protocol. It is the argument for it. These problems are coming whether agents share a standard or not. A standard means the solutions, logging formats, auth schemes, task lifecycles, get built once and reused, instead of being rediscovered inside every company’s private integration layer. That is what protocols are for. They do not make the hard parts easy. They make them shared.</p>
+<h2>Before your agents start talking to each other</h2>
+<ol><li>Pin the protocol version every agent speaks. Version drift across a delegation chain is a silent failure factory.</li><li>Verify Agent Cards cryptographically. Never let an unsigned card touch money, customer data, or production state.</li><li>Give every delegation a task ID, a timeout, and a retry budget. The three together are the difference between an incident and an anecdote.</li><li>Log every inter agent handoff the way you log API calls: who asked, who answered, what changed.</li><li>Cap delegation depth. Agents calling agents calling agents is how bills explode and loops hide.</li><li>Test the failure paths first: the other agent is down, slow, confused, or lying. The happy path is the easy part.</li><li>Run the whole graph on a staging pair before production traffic. Two agents in a sandbox will surprise you. Let them surprise you there.</li></ol>
+</body>
+</html>

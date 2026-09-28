@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>An Agent Is a Model in a Loop: What an AI Agent Actually Is</title>
+</head>
+<body>
+<h1>An Agent Is a Model in a Loop: What an AI Agent Actually Is</h1>
+<p>Strip away the launch keynotes and the whole concept fits on a napkin. Here it is, from first principles.</p>
+<p>A few weeks ago I asked a chatbot to summarize a customer escalation thread. It returned a clean paragraph and stopped. A few days later I pointed an agent at the same thread and wrote one line: resolve it.</p>
+<p>The agent read the thread, pulled the account record, looked up the refund policy, drafted the reply, checked my calendar, booked the follow-up, and came back with a summary of what it had already done. The chatbot's paragraph was probably better written. The agent did the job.</p>
+<p>That is the whole series in one scene. The difference between those two outcomes is not intelligence. The chatbot and the agent may run on the same model weights. The difference is the loop the model sits inside: tools it is allowed to call, state it carries between calls, and feedback it receives when something goes wrong. Understand that loop and every product announcement in September 2026 starts to make sense. "AI agent" stops being a marketing word and becomes a design pattern you can build.</p>
+<p>[DIAGRAM: An agent is a model inside a loop: it perceives, decides, acts, and observes, using tools and memory along the way.]</p>
+<h2>1. The chatbot is a function. The agent is a process.</h2>
+<p>A chatbot is a function in the mathematical sense. Input goes in, text comes out, the slate wipes clean. It has no obligations between calls and no way to act on anything outside the chat.</p>
+<p>An agent is a process. It has a goal, it persists across steps, and it can reach outside itself. The definition I use: an agent is a language model inside a loop with tools, memory, and feedback. The model proposes what to do next. The loop makes it do it. Tools let it touch the world. Memory lets it remember what happened. Feedback tells it whether the step worked, so it can try again instead of declaring victory.</p>
+<p>That is why the chatbot comparison matters. People keep asking whether agents are "just smarter chatbots." They are not smarter. They are situated. The same model that writes a paragraph about the refund policy, placed inside a loop with a browser and an email client, becomes the thing that resolves the ticket. Capability went up because reach went up.</p>
+<blockquote>"A chatbot answers a question. An agent finishes a job."</blockquote>
+<h2>2. The loop, in five verbs: perceive, decide, act, observe, repeat</h2>
+<p>Strip the scaffolding and every agent you have ever used runs the same five-step cycle.</p>
+<p>Perceive: gather the current state. The goal, the conversation so far, the result of the last tool call, the file system, the inbox. This is the agent's picture of the world right now.</p>
+<p>Decide: the model looks at that picture and picks the next move. Send an email, run a search, write some code, ask the user a question.</p>
+<p>Act: the move goes out through a tool, a function call with consequences outside the model. This is the step chatbots never take.</p>
+<p>Observe: the world answers. The email sends or bounces. The search returns results. The code runs or throws. The observation becomes the new state.</p>
+<p>Repeat: the loop turns again, with the fresh observation folded in. This continues until the goal is reached, the budget runs out, or the agent decides it needs a human.</p>
+<p>Perceive→ Decide→ Act→ Observe→ Repeat</p>
+<p>This is not an abstraction. When vendor copy says "the agent researched, booked, and confirmed," you are reading a summary of ten or fifty of these cycles. Stop thinking of the agent as a voice and start thinking of it as a worker running a checklist it wrote for itself.</p>
+<h2>3. Tools are what make the loop real</h2>
+<p>A loop with no tools is just a model talking to itself. Tools are the only part of the architecture that produces effects, so in practice tools are the product.</p>
+<p>The model does not click buttons. It emits a structured request, the framework executes it, and the result flows back into the loop as the next observation. This is also where agents get dangerous and where serious builders spend their time: permissions. A tool that can read your inbox is useful. The same tool pointed at a hostile web page is an exfiltration path. Sandboxing, scoping, and approval gates for sensitive actions are not window dressing. They are the job.</p>
+<p>The September announcements are best read as a land grab over tools. Meta launched its Muse personal agent on September 11, 2026, and it reportedly works across inbox, browser, and wallet through a secure virtual machine. Read that with the loop in mind and it translates cleanly: Meta is not shipping a smarter chat window. It is shipping a bigger tool surface, inbox plus browser plus payments, wrapped in a VM so the loop can act with real consequences without touching the user's actual machine. Apple moved in the same direction, upgrading Siri toward agentic behavior in 2026. Siri has always had a few tools. Agentic behavior means it can chain them: perceive what you need, decide the sequence, act across apps, observe the results. OpenAI, reportedly, hired the creator of OpenClaw in September 2026, the kind of hire you make when the differentiator is no longer the model but the scaffolding around it.</p>
+<p>The pattern across all three: the models are converging, so the competition moved to who controls the richest, safest set of tools and the tightest loop around them.</p>
+<ul><li>Sept 11, 2026 — Meta launched its Muse personal agent, reportedly working across inbox, browser, and wallet through a secure virtual machine. (Reported September 2026)</li><li>33% of enterprise software applications will include agentic AI by 2028. (Per Gartner)</li><li>15% of day-to-day work decisions will be made autonomously by agents by 2028. (Per Gartner)</li><li>Sept 2026 — OpenAI reportedly hired the creator of OpenClaw, while Apple upgraded Siri toward agentic behavior. The scaffolding, not the model, is the prize. (Reported 2026)</li></ul>
+<h2>4. Memory and feedback: the parts nobody diagrams</h2>
+<p>Every agent diagram shows the loop. Fewer show the two things that decide whether the loop is trustworthy: memory and feedback.</p>
+<p>Memory splits into working memory and long memory. Working memory is the scratchpad: the conversation, the last few tool results, the plan it wrote two minutes ago. Long memory is durable: your preferences, the fact that refunds over a threshold need approval, the correction you gave it last month. The first is a context engineering problem. The second is a data problem: what to store, how to retrieve it, how to let the user correct or delete it.</p>
+<p>Feedback is the loop's quality system. After every act, the agent observes the result, but observation is not the same as verification. A naive loop treats "the tool returned 200" as success. A serious loop checks the actual outcome: did the email address the customer's question, did the booking confirm, did the number in the report come from the source it cites. Feedback is also where the loop gets its stopping rules: retry limits, cost budgets, escalation to a human when confidence is low or stakes are high. Most agent failures I have seen in production were not model failures. They were missing stopping rules.</p>
+<blockquote>"The loop is the product. The model is only the part that thinks."</blockquote>
+<h2>5. September 2026: from assistants to persistent proxies</h2>
+<p>The old word was "assistant." An assistant waits for you. A proxy acts for you, continuously, in the background, across sessions. The September launches all point at that shape: agents that run on schedules, hold long-term memory, and complete multi-step work without being watched.</p>
+<p>The market projections are worth stating plainly, with the source attached. Per Gartner, by 2028, 33 percent of enterprise software applications will include agentic AI, and 15 percent of day-to-day work decisions will be made autonomously. Predictions are predictions. But notice the implication: if a third of enterprise apps grow an agentic layer and a meaningful share of routine decisions go autonomous, the loop in this post is not a demo. It is becoming the default interface between software and work. The vendors moving fastest this month, Meta with its September 11 personal agent launch, Apple with its agentic Siri upgrade, OpenAI with the reported OpenClaw hire, are all building the same thing: persistent proxies with deep tool access, aimed at real work rather than chat transcripts.</p>
+<p>The practical consequence: the skill that mattered in 2023 was prompt writing. The skill that matters now is loop design. What can it perceive. What is it allowed to do. How does it know it succeeded. When does it stop and ask. The model is the least of your problems.</p>
+<h2>6. What to build with this mental model</h2>
+<p>If the loop is the product, then building an agent is mostly loop design, and loop design has a short list of decisions that matter.</p>
+<p>Define the goal, not the prompt. "Summarize the thread" is a prompt. "Resolve the escalation, then confirm the customer is satisfied" is a goal. The loop needs a stopping condition.</p>
+<p>Define the tool surface narrowly. Give the agent the smallest set of tools that can complete the job. Every tool is a permission, and unused permissions are how incidents happen.</p>
+<p>Define what success looks like, in checkable terms. The loop can only observe what you instrument. If success means "the booking is confirmed," the agent needs a tool that returns confirmation status, not vibes.</p>
+<p>Define the budget and the escalation path. Max steps, max cost, and a rule for when to hand back to a human: low confidence, high stakes, or repeated failure.</p>
+<p>Log the loop. Every perceive, decide, act, and observe should be recorded. When the agent fails, the trace is how you debug it. When it succeeds, the trace is how you trust it.</p>
+<h2>§ The loop, in code</h2>
+<p>It helps to see how small the core is. Everything else in an agent framework is scaffolding around this:</p>
+<pre># the whole architecture, in one function
+def run_agent(goal, tools, memory, max_steps=20):
+    state = memory.recall(goal)
+    for step in range(max_steps):
+        observation = perceive(state, tools)
+        action = decide(goal, observation, state)   # the model thinks
+        result = act(action, tools)                 # the world moves
+        state = observe(state, action, result)
+        if goal_reached(goal, state):
+            memory.store(goal, state)
+            return state
+        if should_escalate(state, step):
+            return hand_to_human(goal, state)
+    return hand_to_human(goal, state)</pre>
+<p>Sixty-ish lines in spirit, a few hundred in practice. The model is one function call inside it. The rest is engineering.</p>
+<h2>Checklist: is it actually an agent?</h2>
+<ol><li>It holds a goal across multiple steps, not just one response.</li><li>It can act through tools that change something outside itself.</li><li>It observes the results of its actions and adjusts.</li><li>It retries or replans when a step fails, within a budget.</li><li>It knows when to stop: goal reached, budget spent, or human needed.</li><li>Its memory persists across sessions in a way the user can inspect and correct.</li></ol>
+<p>Four or fewer of these and you have a chatbot with extras. All six and you have the thing this series is about.</p>
+<p>The next articles in this series go one layer deeper: how tool use works under the hood, how memory systems are built, how feedback and evaluation keep agents honest, and what breaks when the loop runs unsupervised. The foundation is this post. An agent is a language model inside a loop with tools, memory, and feedback. Perceive, decide, act, observe, repeat. Everything else is scaffolding.</p>
+</body>
+</html>

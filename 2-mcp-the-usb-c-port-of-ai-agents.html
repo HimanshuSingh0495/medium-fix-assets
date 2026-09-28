@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>MCP: The USB-C Port of AI Agents</title>
+</head>
+<body>
+<h1>MCP: The USB-C Port of AI Agents</h1>
+<p>One standard plug for tools, data, and prompts. What it fixes, what it deliberately leaves to you, and the security record so far.</p>
+<p>Last year I shipped an internal RAG assistant that around fifty engineers ended up using every day. The retrieval pipeline was the easy part. The miserable part was the plumbing. Every internal tool needed its own connector. The ticket system had one auth flow, the wiki had another, the build dashboards spoke a third dialect of JSON, and each new data source meant another bespoke adapter: retries, pagination, error handling, schema drift. By the fourth integration I was copying my own code and renaming variables. By the seventh, a status field changed names mid-week and broke a search that only failed on Tuesdays. That is the exact pain the Model Context Protocol was built to end.</p>
+<h2>How MCP connects an agent to tools</h2>
+<p>[DIAGRAM: MCP standardizes the connection between an agent and its tools: one protocol instead of a custom integration per app.]</p>
+<h2>1. One plug, three roles</h2>
+<p>Before MCP, connecting an agent to a tool was a custom integration every time, like the drawer full of charger cables from 2012. MCP standardizes the shape of the connection. Anthropic created the protocol in 2024 and donated it in December 2025 to the Linux Foundation’s Agentic AI Foundation, a body co-founded by Anthropic, Block, and OpenAI, with supporters including Google, Microsoft, AWS, Cloudflare, and Bloomberg. That governance detail matters more than it looks: the plug standard is now shared infrastructure, not one vendor’s API.</p>
+<p>The protocol defines three roles, and getting them straight clears up most confusion. The host is the AI application the user actually touches: a chat app, an IDE, an agent harness. The client is the connection inside the host, one per server, handling the back-and-forth. The server exposes the capability itself: tools, data, prompts. Write the server once, and any host that speaks the protocol can use it. The USB-C analogy holds up well. Nobody argues about which end plugs in anymore, and a cable bought for one laptop charges another. That interchangeability is the entire pitch.</p>
+<h2>2. Three primitives on one wire</h2>
+<p>Everything a server offers falls into three buckets. Tools are functions the model can call: create a ticket, run a query, send a message. Resources are read-only data the host can attach to context: files, documents, database rows. Prompts are reusable templates that standardize common interactions. Underneath, it is JSON-RPC all the way down. A host discovers what a server offers with tools/list and executes with tools/call. No custom SDK per integration, no per-vendor auth dance to reimplement, just request and response envelopes everyone agrees on.</p>
+<pre>{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list"
+}
+// → { "tools": [
+//   { "name": "create_ticket",
+//     "description": "File a support ticket",
+//     "inputSchema": { "type": "object",
+//       "properties": { "title": {"type": "string"} } } }
+// ]}
+
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": { "name": "create_ticket",
+               "arguments": { "title": "Login page 500s on Safari" } }
+}</pre>
+<p>The current spec revision, dated 2026-07-28, stripped the core down further. Protocol sessions and the initialize handshake are gone, leaving tools over JSON-RPC with OAuth 2.1 authentication as the heart of the standard. Removing ceremony from a protocol is usually a sign of maturity: the parts that survived are the parts everyone actually used. What remains is a deliberately small surface, which is also why it is spreading so fast.</p>
+<h2>3. Adoption is real, and it is the risk</h2>
+<p>The ecosystem numbers are striking: roughly 97 million monthly SDK downloads, and more than 10,000 public MCP servers. That is a connector standard reaching commodity status in about eighteen months, which is remarkable for infrastructure that did not exist two years ago. But there is a second half to that sentence. Every one of those servers is a remote endpoint your agent will take instructions from. The USB-C story has a dark twin: the cheap cable that fries your laptop. MCP has the same property. The plug fits everywhere. What comes through it is your problem.</p>
+<ul><li>~97M Monthly SDK downloads, per ecosystem figures</li><li>10,000+ Public MCP servers in the wild</li><li>9.6 CVSS score of CVE-2025-6514, a remote code execution flaw</li><li>~1,000 Organizations affected by the Asana MCP cross-tenant leak, May–June 2025</li></ul>
+<blockquote>“USB-C standardized the plug, not the cable. MCP standardizes the connection, not the trust.”</blockquote>
+<h2>4. What the protocol guarantees, and what it never promised</h2>
+<p>MCP guarantees the mechanics: uniform discovery, a standard invocation envelope, standard auth hooks, transport-agnostic JSON-RPC. That is genuinely valuable, and it is the entire reason the Tuesday-breaking status field from my opening anecdote stops being my problem. But the protocol is silent on whether a tool is honest. A tool description is free text, and the model reads it as instruction. A server can name a tool read_invoice and describe it in ways that nudge the model toward unrelated behavior, or bury instructions in a resource the agent was told to summarize. The protocol has no opinion about any of this. It is the socket, not the electrician.</p>
+<p>This is the line most teams blur. They audit the transport and skip the content. In practice, the safe deployment pattern I have seen work is boring: separate servers for reading and writing, least-privilege scoping on each, and tool descriptions reviewed the way you review code in a pull request. The protocol will hand you the envelope. It will not check what is inside.</p>
+<h2>5. The security record, stated plainly</h2>
+<p>The incidents are public and worth naming, because this is the part the hype cycle skips. In April 2025 came the first widely discussed tool poisoning reports: malicious instructions smuggled inside tool descriptions that agents would follow as if they were their own plan. In May and June 2025, an Asana MCP integration leaked data across tenants, affecting roughly 1,000 organizations, the kind of failure that turns a connector into a compliance event overnight. Then CVE-2025-6514, a remote code execution flaw rated CVSS 9.6, about as severe as the scale goes.</p>
+<p>Security researchers have a name for the underlying pattern: the “lethal trifecta.” An agent that can read your private data, can read untrusted third-party content, and has an outbound channel to send results somewhere combines all three. One compromised tool description is all it takes to complete the circuit. None of this means MCP is broken. It means MCP is load-bearing infrastructure now, and load-bearing infrastructure gets attacked. Treat it accordingly.</p>
+<blockquote>“An agent with private data, untrusted input, and an outbound channel is one compromised tool description away from a breach. The protocol gives you all three pieces. The rest is on you.”</blockquote>
+<h2>Before you ship an MCP server: a checklist</h2>
+<ul><li>Treat every MCP server like a dependency with full network access, because that is what it is. Vet the publisher the way you would vet a library with postinstall scripts.</li><li>Split read and write capabilities across separate servers, and scope each to least privilege. A search tool should not be able to delete.</li><li>Read tool descriptions like code review. Pin server versions and do not auto-update a server that can run shell commands.</li><li>Put a policy or human gate in front of destructive tools. The protocol will not do it for you, so your host must.</li><li>Log every tools/call with its arguments. When something goes wrong, and eventually something will, the audit trail is the only thing that tells you what the agent actually did.</li></ul>
+</body>
+</html>

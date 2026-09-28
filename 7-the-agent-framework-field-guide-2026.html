@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>The Agent Framework Field Guide: Which Tool Fits Which Job</title>
+</head>
+<body>
+<h1>The Agent Framework Field Guide: Which Tool Fits Which Job</h1>
+<p>Honest practitioner notes on LangGraph, CrewAI, the provider SDKs, and the September 2026 shift toward managed orchestration.</p>
+<p>Last spring I watched a team rebuild the same customer-support agent three times in six weeks. First in a provider SDK because the demo was fast. Then in a role-based crew framework because the demo impressed a VP. Then, finally, in an explicit state graph, because the first two versions could not survive a multi-turn conversation that spanned a lunch break. Each rewrite took about two weeks. The graph version has been in production for four months without a rewrite. I think about that team every time someone asks me which agent framework is "the best."</p>
+<p>There is no best framework. There are workflows with different shapes, and frameworks that fit those shapes. An agent framework, at its core, is a way to organize the loop: the model thinks, it calls tools, tools return results, the model thinks again. Every framework in this guide does that loop. They differ in how much of the loop they make explicit, how much state they keep for you, and how much infrastructure they ask you to run yourself.</p>
+<p>Here is how I actually think about the field in September 2026.</p>
+<p>[DIAGRAM: The 2026 consensus: a graph orchestrator on top, specialized agents in the middle, standard tools at the bottom.]</p>
+<h2>1. Start from the workflow, not the logo</h2>
+<p>Before comparing frameworks, sketch your workflow on paper. If the path from user message to final answer is mostly one straight line with a few tool calls, you need almost no framework at all. A plain loop around an API call will do, and every abstraction you add is a place for bugs to hide. If the workflow branches (verify the claim, and if it fails, escalate, and if it succeeds, summarize), retries, waits on humans, or must resume after a crash, you need a framework that treats the workflow as a first-class thing.</p>
+<p>That distinction is the whole field guide. The frameworks below are ordered not by quality but by how much workflow complexity they are built to carry.</p>
+<h2>2. LangGraph: when the workflow is the product</h2>
+<p>LangGraph models an agent as an explicit state graph: nodes do work, edges decide what happens next, and a shared state object carries everything along. The reason it has become the production default is the pair of features that matter most when things go wrong: checkpointing and durable execution. A checkpoint is a saved snapshot of the graph's state after each step. If a run crashes, times out, or waits on a human approval, it resumes from the last checkpoint instead of starting over.</p>
+<p>I reach for LangGraph when the agent has branches, loops, retries, or human-in-the-loop steps that must survive interruptions. The cost is real: more code, graph-shaped thinking, harder debugging. In 2026 testing I have seen referenced, LangGraph scored roughly 62% on complex multi-step tasks against roughly 54% for CrewAI. Treat that as rough color, not a verdict. I have seen LangGraph lose to simpler tools on simple jobs, because the graph was overkill and the team fought it.</p>
+<ul><li>~62% vs ~54% Rough 2026 benchmark color on complex tasks, LangGraph vs CrewAI. Workflow fit matters more than the gap.</li><li>Checkpointing: The feature that makes LangGraph the production default: crash-safe, resumable, human-approvable runs.</li></ul>
+<p>A minimal LangGraph program reads like the workflow it implements. This is a sketch of the shape, not a full program:</p>
+<pre># The workflow, made explicit: nodes do work, edges route.
+graph = StateGraph(AgentState)
+graph.add_node("plan", planner)        # decide what to do
+graph.add_node("act", tool_runner)     # call tools
+graph.add_node("review", reviewer)     # check the result
+
+graph.add_edge("plan", "act")
+graph.add_conditional_edges("act", route_after_tools,
+    {"review": "review", "done": END})
+graph.add_conditional_edges("review", route_after_review,
+    {"retry": "plan", "done": END})
+
+# Durable execution: crash here, resume from the checkpoint.
+app = graph.compile(checkpointer=checkpointer)</pre>
+<p>If that code looks like overkill for your problem, your problem probably does not need LangGraph yet. That is useful information, not a failure.</p>
+<h2>3. CrewAI: when Friday is the deadline</h2>
+<p>CrewAI organizes agents as role-based crews: you define agents with roles like researcher, writer, and critic, give them tasks, and let them collaborate. It is the fastest framework I know for getting a multi-agent prototype in front of a stakeholder. The role metaphor maps cleanly onto how non-engineers already think about work, which is why demos built in CrewAI land well in meetings.</p>
+<p>The honest trade: speed of prototyping versus control of execution. When the crew's conversation goes sideways, and it will, you have less leverage to intervene than with an explicit graph. I use CrewAI for week-one prototypes, internal tools with forgiving failure modes, and anything where the demo matters more than durability. If the prototype survives contact with users, plan the migration to a graph early, before the crew's implicit control flow becomes load-bearing.</p>
+<h2>4. The provider SDKs: bet on the ecosystem you already live in</h2>
+<p>Each major provider now ships its own agent SDK, and the choice between them is mostly a choice about where your code already runs.</p>
+<p>OpenAI Agents SDK is built around handoffs, guardrails, and tracing. Handoffs let one agent delegate to a specialist while keeping the conversation coherent. Guardrails check inputs and outputs, the kind of thing you otherwise bolt on yourself. Tracing records each step, which is the difference between debugging and guessing.</p>
+<p>Claude Agent SDK is MCP-native and supports computer use. MCP, the Model Context Protocol, is the open standard for giving models tools and data sources. Computer use means the agent can operate a computer interface directly. I reach for this when the agent's job is open-ended work across many tools rather than a fixed workflow.</p>
+<p>Google ADK (Agent Development Kit) is the choice inside Google's ecosystem, and September 2026 brought two notable additions: Kotlin support and on-device Android support. Kotlin support matters because it brings Android's primary language into the agent-building tent. On-device support matters more: agents that can run on the phone itself change the latency, privacy, and offline story completely. If you are building mobile agents, ADK just became much harder to ignore.</p>
+<ul><li>Sept 2026 — Google ADK added Kotlin support and on-device Android support, a meaningful move for mobile agent builders.</li><li>Public beta: The OpenAI Agents API entered public beta in Sept 2026: managed orchestration, context management, and execution infrastructure.</li></ul>
+<h2>5. The September 2026 shift: orchestration becomes a service</h2>
+<p>The biggest development this month is not a framework at all. It is the OpenAI Agents API entering public beta in September 2026: managed orchestration, context management, and execution infrastructure, sold as a service. Read that carefully, because it changes the build-versus-buy math. Until now, durable multi-step execution meant building it yourself on a framework like LangGraph: your loop, your context window, your state, your retries. The Agents API proposes to take that whole layer off your plate.</p>
+<p>I am deliberately cautious here. Managed orchestration is the right idea, and early adopters will move faster. But it is a public beta, and betas have sharp edges: pricing that changes, behaviors that shift, and the quiet lock-in of building your core loop on someone else's runtime. My rule for betas on the critical path: prototype on them now, commit production traffic only after you have seen how they behave under your load.</p>
+<p>The same month also clarified the Microsoft story. The Microsoft Agent Framework reached 1.0 general availability in April 2026, and it is the successor to AutoGen, which is now in maintenance mode per its own README. If you have AutoGen code in production, that README is a polite but firm signal: plan the migration. Maintenance mode means security fixes, not new features, and every month you wait, the gap between what you have and what the Framework offers gets wider. I would treat this as a scheduled migration, not an emergency, and I would schedule it.</p>
+<h2>6. How I actually choose: the checklist</h2>
+<p>After all of that, here is the decision process I run through with teams. It takes ten minutes and has saved multiple rewrites.</p>
+<ul><li>Sketch the workflow first. Straight line with tool calls? You barely need a framework. Branches, retries, human approvals, crash recovery? You need explicit state and checkpointing, which points at LangGraph.</li><li>Name your deadline. Prototype due this week for a demo? CrewAI's role-based crews are the fastest path to something a stakeholder can react to. Plan the production migration before the prototype becomes load-bearing.</li><li>Follow your ecosystem. Already committed to a provider? Its SDK (OpenAI Agents SDK with handoffs, guardrails, and tracing; Claude Agent SDK with MCP-native tooling and computer use; Google ADK, now with Kotlin and on-device Android support) removes glue code you would otherwise write and maintain.</li><li>Check the maintenance status. On AutoGen? Its README says maintenance mode, and the Microsoft Agent Framework has been GA since April 2026. Schedule the migration.</li><li>Decide what you want to own. The OpenAI Agents API public beta (Sept 2026) offers managed orchestration, context management, and execution infra. Prototype on it, but keep your core loop portable until the beta proves itself under your load.</li><li>Consider the layered pattern. The architecture I see winning in 2026 production systems: a graph orchestrator on top for the durable workflow, specialized agents below for the actual work. It is not one framework, it is two layers, each chosen for what it does best.</li><li>Ignore small benchmark gaps. Rough 2026 color had LangGraph near 62% and CrewAI near 54% on complex tasks. That gap is real and also mostly irrelevant next to workflow fit. The wrong framework at 62% still loses to the right one at 54%.</li></ul>
+<p>The team from my opening anecdote ended up exactly on that layered pattern: a LangGraph orchestrator managing the durable support workflow, with specialized sub-agents handling classification, retrieval, and drafting underneath. Four months, no rewrite. Not because LangGraph is the best framework, but because it was the right shape for a workflow with branches, retries, and human approvals.</p>
+<p>Frameworks are not religions. They are tools with shapes. Match the shape to the job, check the maintenance status before you commit, and keep your core loop portable enough that the September 2026 beta you prototype on today does not become the migration you dread in 2027.</p>
+</body>
+</html>
